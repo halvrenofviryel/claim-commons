@@ -7,14 +7,9 @@ import json
 from copy import deepcopy
 from typing import Any
 
-OUTCOMES = {
-    "SUPPORTED",
-    "REFUTED",
-    "NOT_MEASURED",
-    "STALE",
-    "INCONCLUSIVE",
-    "ERROR",
-}
+EVIDENCE_FINDINGS = {"SUPPORTED", "REFUTED", "NOT_MEASURED", "INCONCLUSIVE"}
+APPLICABILITY_STATES = {"CURRENT", "STALE", "UNKNOWN"}
+PROCESSING_STATES = {"COMPLETED", "ERROR"}
 
 
 def canonical_bytes(value: Any) -> bytes:
@@ -29,6 +24,16 @@ def canonical_bytes(value: Any) -> bytes:
 
 def sha256_bytes(value: bytes) -> str:
     return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def _is_sha256_id(value: Any) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha256:") or len(value) != 71:
+        return False
+    return all(character in "0123456789abcdef" for character in value[7:])
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _require_mapping(value: Any, name: str) -> dict[str, Any]:
@@ -57,7 +62,7 @@ def validate_profile(profile: dict[str, Any]) -> None:
     )
     if criterion.get("operator") not in {"gte", "gt", "lte", "lt", "eq"}:
         raise ValueError("criterion.operator must be gte, gt, lte, lt, or eq")
-    if not isinstance(criterion.get("threshold"), (int, float)):
+    if not _is_number(criterion.get("threshold")):
         raise ValueError("criterion.threshold must be numeric")
 
 
@@ -71,35 +76,214 @@ def _compare(value: float, operator: str, threshold: float) -> bool:
     }[operator]
 
 
-def derive_outcome(
+def _source_revision(source_binding: dict[str, Any]) -> tuple[bool, str | None]:
+    revision = _require_mapping(
+        source_binding.get("subject_revision"),
+        "source_binding.subject_revision",
+    )
+    observed = revision.get("observed")
+    value = revision.get("value")
+    if not isinstance(observed, bool):
+        raise ValueError("source_binding.subject_revision.observed must be boolean")
+    if observed and not isinstance(value, str):
+        raise ValueError("an observed source subject revision must have a string value")
+    if not observed and value is not None:
+        raise ValueError("an unobserved source subject revision must have a null value")
+    source_path = revision.get("source_path")
+    if observed and not isinstance(source_path, str):
+        raise ValueError("an observed source subject revision must have a string source_path")
+    if not observed and source_path is not None:
+        raise ValueError("an unobserved source subject revision must have a null source_path")
+    return observed, value
+
+
+def _derive_evidence_and_processing(
+    measurement: dict[str, Any],
+    criterion: dict[str, Any],
+) -> tuple[str, str, str, str]:
+    state = measurement.get("state")
+    if state == "ERROR":
+        return (
+            "NOT_MEASURED",
+            "ERROR",
+            "The source reports an execution or processing error; no evidence finding is derived.",
+            "The admitted source state is ERROR.",
+        )
+    if state == "NOT_MEASURED":
+        return (
+            "NOT_MEASURED",
+            "COMPLETED",
+            "The selected measurement is absent or was not completed.",
+            "The adapter completed and admitted no selected measurement.",
+        )
+    if state != "OBSERVED":
+        return (
+            "NOT_MEASURED",
+            "ERROR",
+            "The measurement state is unrecognized; no evidence finding is derived.",
+            "The admitted measurement state is not recognized by this capsule version.",
+        )
+    if measurement.get("complete") is not True:
+        return (
+            "INCONCLUSIVE",
+            "COMPLETED",
+            "The source contains a partial or incompletely scored population.",
+            "The adapter completed and admitted an incomplete observed population.",
+        )
+
+    value = measurement.get("value")
+    if not _is_number(value):
+        return (
+            "NOT_MEASURED",
+            "ERROR",
+            "The observed measurement has no numeric value; no evidence finding is derived.",
+            "The complete OBSERVED measurement is malformed because value is not numeric.",
+        )
+    passed = _compare(value, criterion["operator"], criterion["threshold"])
+    if passed:
+        return (
+            "SUPPORTED",
+            "COMPLETED",
+            "The complete observed value satisfies the declared criterion.",
+            "The adapter completed and admitted a complete numeric measurement.",
+        )
+    return (
+        "REFUTED",
+        "COMPLETED",
+        "The complete observed value does not satisfy the declared criterion.",
+        "The adapter completed and admitted a complete numeric measurement.",
+    )
+
+
+def _recorded_applicability(
+    source_binding: dict[str, Any],
+    recorded_subject_revision: str,
+) -> tuple[str, str]:
+    observed, source_revision = _source_revision(source_binding)
+    if not observed:
+        return "UNKNOWN", "The source does not expose a subject revision for this adapter."
+    if source_revision != recorded_subject_revision:
+        return "STALE", "The admitted source revision differs from the recorded subject revision."
+    return "CURRENT", "The admitted source revision matches the recorded subject revision."
+
+
+def derive_assessment(
     measurement: dict[str, Any],
     criterion: dict[str, Any],
     *,
+    source_binding: dict[str, Any],
     recorded_subject_revision: str,
-    current_subject_revision: str | None = None,
+) -> dict[str, Any]:
+    """Derive separate evidence, applicability, and processing axes."""
+
+    evidence, processing, evidence_basis, processing_basis = _derive_evidence_and_processing(
+        measurement,
+        criterion,
+    )
+    applicability, applicability_basis = _recorded_applicability(
+        source_binding,
+        recorded_subject_revision,
+    )
+    return {
+        "evidence_finding": evidence,
+        "applicability": applicability,
+        "processing": processing,
+        "basis": {
+            "evidence_finding": evidence_basis,
+            "applicability": applicability_basis,
+            "processing": processing_basis,
+        },
+        "qualifications": [
+            "These axes are derived from admitted source fields and the declared criterion.",
+            "They do not establish semantic truth, evaluation validity, safety, independence, or production fitness.",
+        ],
+    }
+
+
+def current_applicability(
+    *,
+    recorded_subject_revision: str,
+    source_binding: dict[str, Any],
+    current_subject_revision: str | None,
 ) -> tuple[str, str]:
-    """Derive a bounded outcome from host-supplied measurement fields."""
-
-    if current_subject_revision is not None and current_subject_revision != recorded_subject_revision:
+    if current_subject_revision is None:
+        return "UNKNOWN", "No current subject revision was supplied to the verifier."
+    if current_subject_revision != recorded_subject_revision:
         return "STALE", "The supplied current subject revision differs from the recorded revision."
+    observed, source_revision = _source_revision(source_binding)
+    if not observed:
+        return "UNKNOWN", "The source did not expose a revision that can bind this measurement to the subject."
+    if source_revision != recorded_subject_revision:
+        return "STALE", "The admitted source revision differs from the recorded subject revision."
+    return "CURRENT", "The supplied current revision and admitted source revision match the recorded revision."
 
-    state = measurement.get("state")
-    if state == "ERROR":
-        return "ERROR", "The source reports an execution or processing error."
-    if state == "NOT_MEASURED":
-        return "NOT_MEASURED", "The selected measurement is absent or was not completed."
-    if state != "OBSERVED":
-        return "ERROR", "The measurement state is not recognized by this prototype."
-    if measurement.get("complete") is not True:
-        return "INCONCLUSIVE", "The source contains a partial or incompletely scored population."
 
-    value = measurement.get("value")
-    if not isinstance(value, (int, float)):
-        return "ERROR", "The observed measurement has no numeric value."
-    passed = _compare(value, criterion["operator"], criterion["threshold"])
-    if passed:
-        return "SUPPORTED", "The complete observed value satisfies the declared criterion."
-    return "REFUTED", "The complete observed value does not satisfy the declared criterion."
+def validate_capsule_structure(capsule: dict[str, Any]) -> None:
+    _require_mapping(capsule, "capsule")
+    required = (
+        "capsule_id",
+        "capsule_version",
+        "created_at",
+        "claim",
+        "subject",
+        "evaluation_contract",
+        "source",
+        "source_binding",
+        "selection",
+        "measurement",
+        "assessment",
+        "scope",
+    )
+    for name in required:
+        if name not in capsule:
+            raise ValueError(f"capsule.{name} is required")
+    if capsule["capsule_version"] != "0.2":
+        raise ValueError("capsule.capsule_version must be 0.2")
+    if not _is_sha256_id(capsule["capsule_id"]):
+        raise ValueError("capsule.capsule_id must be a sha256 identifier")
+    validate_profile(
+        {
+            "profile_version": capsule["capsule_version"],
+            "recorded_at": capsule["created_at"],
+            "claim": capsule["claim"],
+            "subject": capsule["subject"],
+            "evaluation_contract": capsule["evaluation_contract"],
+        }
+    )
+    _source_revision(_require_mapping(capsule["source_binding"], "capsule.source_binding"))
+    source = _require_mapping(capsule["source"], "capsule.source")
+    for name in ("format", "ref", "sha256", "adapter_version"):
+        if name not in source:
+            raise ValueError(f"capsule.source.{name} is required")
+    if source["format"] not in {"inspect-ai-v2", "promptfoo-jsonl"}:
+        raise ValueError("capsule.source.format is not recognized")
+    if not isinstance(source["ref"], str) or not source["ref"]:
+        raise ValueError("capsule.source.ref must be a non-empty string")
+    if not _is_sha256_id(source["sha256"]):
+        raise ValueError("capsule.source.sha256 must be a sha256 identifier")
+    if not isinstance(source["adapter_version"], str) or not source["adapter_version"]:
+        raise ValueError("capsule.source.adapter_version must be a non-empty string")
+    _require_mapping(capsule["selection"], "capsule.selection")
+    _require_mapping(capsule["scope"], "capsule.scope")
+    measurement = _require_mapping(capsule["measurement"], "capsule.measurement")
+    if measurement.get("state") not in {"OBSERVED", "NOT_MEASURED", "ERROR"}:
+        raise ValueError("capsule.measurement.state is not recognized")
+    if not isinstance(measurement.get("complete"), bool):
+        raise ValueError("capsule.measurement.complete must be boolean")
+    assessment = _require_mapping(capsule["assessment"], "capsule.assessment")
+    if assessment.get("evidence_finding") not in EVIDENCE_FINDINGS:
+        raise ValueError("capsule.assessment.evidence_finding is not recognized")
+    if assessment.get("applicability") not in APPLICABILITY_STATES:
+        raise ValueError("capsule.assessment.applicability is not recognized")
+    if assessment.get("processing") not in PROCESSING_STATES:
+        raise ValueError("capsule.assessment.processing is not recognized")
+    basis = _require_mapping(assessment.get("basis"), "capsule.assessment.basis")
+    for axis in ("evidence_finding", "applicability", "processing"):
+        if not isinstance(basis.get(axis), str):
+            raise ValueError(f"capsule.assessment.basis.{axis} must be a string")
+    qualifications = assessment.get("qualifications")
+    if not isinstance(qualifications, list) or not all(isinstance(item, str) for item in qualifications):
+        raise ValueError("capsule.assessment.qualifications must be an array of strings")
 
 
 def build_capsule(
@@ -111,18 +295,27 @@ def build_capsule(
     adapter_version: str,
     selection: dict[str, Any],
     measurement: dict[str, Any],
+    source_binding: dict[str, Any],
 ) -> dict[str, Any]:
     """Build a deterministic capsule from a declared profile and admitted measurement."""
 
     validate_profile(profile)
+    recorded_revision = str(profile["subject"]["revision"])
+    observed, source_revision = _source_revision(source_binding)
+    if observed and source_revision != recorded_revision:
+        raise ValueError(
+            "the source subject revision does not match profile.subject.revision; "
+            "build a profile for the observed source revision"
+        )
     criterion = deepcopy(profile["evaluation_contract"]["criterion"])
-    status, basis = derive_outcome(
+    assessment = derive_assessment(
         measurement,
         criterion,
-        recorded_subject_revision=str(profile["subject"]["revision"]),
+        source_binding=source_binding,
+        recorded_subject_revision=recorded_revision,
     )
     body = {
-        "capsule_version": "0.1",
+        "capsule_version": "0.2",
         "created_at": profile["recorded_at"],
         "claim": deepcopy(profile["claim"]),
         "subject": deepcopy(profile["subject"]),
@@ -133,19 +326,15 @@ def build_capsule(
             "sha256": sha256_bytes(source_bytes),
             "adapter_version": adapter_version,
         },
+        "source_binding": deepcopy(source_binding),
         "selection": deepcopy(selection),
         "measurement": deepcopy(measurement),
-        "assessment": {
-            "status": status,
-            "basis": basis,
-            "qualifications": [
-                "This status is derived from the admitted source fields and declared criterion.",
-                "It is not a finding of semantic truth, safety, independence, or production fitness.",
-            ],
-        },
+        "assessment": assessment,
         "scope": deepcopy(profile.get("scope", {})),
     }
-    return {"capsule_id": sha256_bytes(canonical_bytes(body)), **body}
+    capsule = {"capsule_id": sha256_bytes(canonical_bytes(body)), **body}
+    validate_capsule_structure(capsule)
+    return capsule
 
 
 def verify_capsule(
@@ -154,55 +343,107 @@ def verify_capsule(
     source_bytes: bytes | None = None,
     current_subject_revision: str | None = None,
 ) -> dict[str, Any]:
-    """Check structural digest, optional source bytes, and deterministic assessment."""
+    """Verify capsule integrity and, when supplied, rederive fields from source bytes."""
 
     checks: dict[str, bool] = {}
     problems: list[str] = []
-    body = {key: deepcopy(value) for key, value in capsule.items() if key != "capsule_id"}
-    expected_id = sha256_bytes(canonical_bytes(body))
-    checks["capsule_digest"] = capsule.get("capsule_id") == expected_id
-    if not checks["capsule_digest"]:
+    verification_level = "SOURCE_DERIVED" if source_bytes is not None else "CAPSULE_ONLY"
+
+    try:
+        validate_capsule_structure(capsule)
+        checks["structure"] = True
+    except (KeyError, TypeError, ValueError) as exc:
+        checks["structure"] = False
+        problems.append(f"structure: {exc}")
+
+    try:
+        body = {key: deepcopy(value) for key, value in capsule.items() if key != "capsule_id"}
+        expected_id = sha256_bytes(canonical_bytes(body))
+        checks["capsule_digest"] = capsule.get("capsule_id") == expected_id
+    except (AttributeError, TypeError, ValueError) as exc:
+        checks["capsule_digest"] = False
+        problems.append(f"capsule digest: {exc}")
+    if not checks["capsule_digest"] and not any(p.startswith("capsule digest:") for p in problems):
         problems.append("capsule_id does not match the canonical capsule body")
 
-    if source_bytes is None:
-        checks["source_digest"] = True
-        source_check = "NOT_CHECKED"
-    else:
-        source_check = "CHECKED"
-        checks["source_digest"] = capsule.get("source", {}).get("sha256") == sha256_bytes(source_bytes)
-        if not checks["source_digest"]:
-            problems.append("source bytes do not match source.sha256")
-
+    current_axis = "UNKNOWN"
+    current_basis = "Verification could not derive current applicability."
     try:
         criterion = capsule["evaluation_contract"]["criterion"]
         recorded_revision = str(capsule["subject"]["revision"])
-        stored_status, _ = derive_outcome(
+        stored_assessment = derive_assessment(
             capsule["measurement"],
             criterion,
+            source_binding=capsule["source_binding"],
             recorded_subject_revision=recorded_revision,
         )
-        checks["stored_assessment"] = capsule.get("assessment", {}).get("status") == stored_status
+        checks["stored_assessment"] = canonical_bytes(capsule["assessment"]) == canonical_bytes(stored_assessment)
         if not checks["stored_assessment"]:
-            problems.append("assessment.status does not match the admitted measurement and criterion")
-        current_status, current_basis = derive_outcome(
-            capsule["measurement"],
-            criterion,
+            problems.append("assessment does not match the admitted measurement, source binding, and criterion")
+        current_axis, current_basis = current_applicability(
             recorded_subject_revision=recorded_revision,
+            source_binding=capsule["source_binding"],
             current_subject_revision=current_subject_revision,
         )
     except (KeyError, TypeError, ValueError) as exc:
         checks["stored_assessment"] = False
-        current_status = "ERROR"
-        current_basis = f"Verification could not derive an assessment: {exc}"
-        problems.append(str(exc))
+        problems.append(f"assessment derivation: {exc}")
+
+    source_check = "NOT_CHECKED"
+    if source_bytes is not None:
+        source_check = "CHECKED"
+        source = capsule.get("source", {}) if isinstance(capsule, dict) else {}
+        checks["source_digest"] = source.get("sha256") == sha256_bytes(source_bytes)
+        if not checks["source_digest"]:
+            problems.append("source bytes do not match source.sha256")
+
+        try:
+            from .adapters import get_adapter
+
+            adapter = get_adapter(source.get("format"), source.get("adapter_version"))
+            checks["adapter_supported"] = True
+        except (TypeError, ValueError) as exc:
+            checks["adapter_supported"] = False
+            checks["source_admission"] = False
+            checks["source_selection"] = False
+            checks["source_measurement"] = False
+            checks["source_binding"] = False
+            problems.append(f"source adapter: {exc}")
+        else:
+            try:
+                re_selection, re_measurement, re_binding = adapter.admit(
+                    source_bytes,
+                    capsule.get("selection", {}),
+                )
+                checks["source_admission"] = True
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+                checks["source_admission"] = False
+                checks["source_selection"] = False
+                checks["source_measurement"] = False
+                checks["source_binding"] = False
+                problems.append(f"source admission: {exc}")
+            else:
+                checks["source_selection"] = canonical_bytes(re_selection) == canonical_bytes(capsule.get("selection"))
+                checks["source_measurement"] = canonical_bytes(re_measurement) == canonical_bytes(capsule.get("measurement"))
+                checks["source_binding"] = canonical_bytes(re_binding) == canonical_bytes(capsule.get("source_binding"))
+                if not checks["source_selection"]:
+                    problems.append("selection cannot be rederived from the source with the recorded adapter")
+                if not checks["source_measurement"]:
+                    problems.append("measurement cannot be rederived from the source with the recorded adapter")
+                if not checks["source_binding"]:
+                    problems.append("subject binding cannot be rederived from the source with the recorded adapter")
 
     return {
         "valid": all(checks.values()),
+        "verification_level": verification_level,
         "checks": checks,
         "source_bytes": source_check,
-        "stored_status": capsule.get("assessment", {}).get("status"),
-        "current_status": current_status,
-        "current_basis": current_basis,
+        "recorded_assessment": capsule.get("assessment") if isinstance(capsule, dict) else None,
+        "current_applicability": current_axis,
+        "current_applicability_basis": current_basis,
         "problems": problems,
-        "limitation": "valid means digest and decision consistency only; it does not establish claim truth",
+        "limitation": (
+            "SOURCE_DERIVED rechecks the implemented adapter mapping; CAPSULE_ONLY does not. "
+            "Neither level establishes semantic truth, evaluation validity, source independence, or safety."
+        ),
     }

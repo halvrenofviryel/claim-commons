@@ -27,3 +27,4 @@ jobs:
           claim-commons verify
           --capsule /tmp/capsule.json
           --source fixtures/inspect/complete.json
+          --current-subject-revision model-a

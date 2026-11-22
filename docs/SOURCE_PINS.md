@@ -8,7 +8,7 @@ The first two adapters were shaped from public upstream documentation and source
 - Main revision: `da25f0bf0ad0bd4a6efddb6065ffd33a38da3538`
 - Evaluation logs: https://inspect.aisi.org.uk/eval-logs.html
 
-The adapter uses only run `status`, `results.total_samples`, `results.completed_samples`, selected `scores`, scored and unscored counts, and a selected metric value.
+The adapter uses only run `status`, `eval.model`, `results.total_samples`, `results.completed_samples`, selected `scores`, scored and unscored counts, and a selected metric value. In this prototype, `eval.model` is treated as the source-reported subject revision and must equal the profile revision. This narrow equality check does not prove provider identity or semantic equivalence.
 
 ## Promptfoo
 

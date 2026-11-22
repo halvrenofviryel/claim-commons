@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .adapters import inspect_ai, promptfoo
+from .adapters import admit_source, inspect_ai, promptfoo
 from .core import build_capsule, verify_capsule
 
 
@@ -43,15 +43,21 @@ def main() -> None:
         source_bytes = Path(args.source).read_bytes()
         selector = profile.get("selector", {})
         adapter = inspect_ai if args.format == "inspect-ai-v2" else promptfoo
-        selection, measurement = adapter.admit(source_bytes, selector)
+        selection, measurement, source_binding = admit_source(
+            args.format,
+            source_bytes,
+            selector,
+            adapter_version=adapter.ADAPTER_VERSION,
+        )
         capsule = build_capsule(
             profile,
             source_format=args.format,
             source_ref=Path(args.source).name,
             source_bytes=source_bytes,
-            adapter_version="0.1.0a1",
+            adapter_version=adapter.ADAPTER_VERSION,
             selection=selection,
             measurement=measurement,
+            source_binding=source_binding,
         )
         _write_json(capsule, args.out)
         return

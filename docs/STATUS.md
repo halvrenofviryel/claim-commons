@@ -2,18 +2,21 @@
 
 ## Current maturity
 
-Claim Commons 0.1.0a1 is a first-party research prototype.
+Claim Commons 0.1.0a2 is a first-party research prototype.
 
 The repository contains two narrow adapters, one deterministic capsule builder, one verifier, a JSON Schema, synthetic fixtures, and automated controls. The fixtures exercise only the fields documented in this repository. The project has not yet admitted captured exports from Inspect AI or Promptfoo.
 
 ## Observed in this repository
 
-- Complete Inspect-shaped results can produce a scoped `SUPPORTED` outcome.
+- Complete Inspect-shaped results produce evidence finding `SUPPORTED`, recorded applicability `CURRENT`, and processing `COMPLETED` for the included profile.
 - Partial Inspect-shaped results remain `INCONCLUSIVE`, even when the observed numeric value is high.
-- Promptfoo-shaped rows without `gradingResult` remain `NOT_MEASURED`.
-- A different supplied current subject revision produces `STALE` without rewriting the recorded assessment.
-- Altered source bytes and altered capsule bodies fail their respective digest checks.
-- An explicit source error remains `ERROR`.
+- Promptfoo-shaped rows without `gradingResult` remain `NOT_MEASURED`; the current mapping cannot bind those rows to a subject revision, so applicability is `UNKNOWN`.
+- A different supplied current subject revision produces current applicability `STALE` without masking the recorded evidence or processing axes.
+- No supplied current revision produces `UNKNOWN`, rather than silently presenting an earlier finding as current.
+- Source-backed verification reruns the recorded adapter. Rehashed fabricated measurements and fabricated source-binding paths fail their rederivation checks.
+- Inspect `eval.model` is compared with the declared subject revision during construction; a mismatch is rejected.
+- Inspect completeness requires consistent total, completed, scored, and unscored counts.
+- An explicit source error produces evidence finding `NOT_MEASURED` and processing `ERROR`.
 
 These observations are bounded to the included automated tests and synthetic fixtures.
 

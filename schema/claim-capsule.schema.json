@@ -3,6 +3,7 @@
   "$id": "https://github.com/halvrenofviryel/claim-commons/raw/main/schema/claim-capsule.schema.json",
   "title": "Claim Commons Claim Capsule",
   "type": "object",
+  "additionalProperties": false,
   "required": [
     "capsule_id",
     "capsule_version",
@@ -11,6 +12,7 @@
     "subject",
     "evaluation_contract",
     "source",
+    "source_binding",
     "selection",
     "measurement",
     "assessment",
@@ -18,7 +20,7 @@
   ],
   "properties": {
     "capsule_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "capsule_version": {"const": "0.1"},
+    "capsule_version": {"const": "0.2"},
     "created_at": {"type": "string"},
     "claim": {
       "type": "object",
@@ -50,10 +52,25 @@
       "type": "object",
       "required": ["format", "ref", "sha256", "adapter_version"],
       "properties": {
-        "format": {"type": "string"},
+        "format": {"enum": ["inspect-ai-v2", "promptfoo-jsonl"]},
         "ref": {"type": "string"},
         "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
         "adapter_version": {"type": "string"}
+      }
+    },
+    "source_binding": {
+      "type": "object",
+      "required": ["subject_revision"],
+      "properties": {
+        "subject_revision": {
+          "type": "object",
+          "required": ["observed", "value", "source_path"],
+          "properties": {
+            "observed": {"type": "boolean"},
+            "value": {"type": ["string", "null"]},
+            "source_path": {"type": ["string", "null"]}
+          }
+        }
       }
     },
     "selection": {"type": "object"},
@@ -71,10 +88,20 @@
     },
     "assessment": {
       "type": "object",
-      "required": ["status", "basis", "qualifications"],
+      "required": ["evidence_finding", "applicability", "processing", "basis", "qualifications"],
       "properties": {
-        "status": {"enum": ["SUPPORTED", "REFUTED", "NOT_MEASURED", "STALE", "INCONCLUSIVE", "ERROR"]},
-        "basis": {"type": "string"},
+        "evidence_finding": {"enum": ["SUPPORTED", "REFUTED", "NOT_MEASURED", "INCONCLUSIVE"]},
+        "applicability": {"enum": ["CURRENT", "STALE", "UNKNOWN"]},
+        "processing": {"enum": ["COMPLETED", "ERROR"]},
+        "basis": {
+          "type": "object",
+          "required": ["evidence_finding", "applicability", "processing"],
+          "properties": {
+            "evidence_finding": {"type": "string"},
+            "applicability": {"type": "string"},
+            "processing": {"type": "string"}
+          }
+        },
         "qualifications": {"type": "array", "items": {"type": "string"}}
       }
     },

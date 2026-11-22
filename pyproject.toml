@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claim-commons"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "A research prototype for portable, scoped AI evaluation claims"
 readme = "README.md"
 requires-python = ">=3.10"

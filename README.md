@@ -11,15 +11,16 @@ This repository tests one narrow alternative: a deterministic **claim capsule** 
 - A small, implementation-neutral claim-capsule schema.
 - A narrow importer for selected Inspect AI evaluation-log v2 result fields.
 - A narrow importer for Promptfoo JSONL rows containing `gradingResult` and numeric `score` fields.
-- A dependency-free Python verifier that rechecks the capsule digest, optional source bytes, and the deterministic comparison between an admitted measurement and a declared criterion.
-- Synthetic fixtures that distinguish `SUPPORTED`, `REFUTED`, `NOT_MEASURED`, `INCONCLUSIVE`, `STALE`, and `ERROR`.
-- Eight automated controls covering complete, partial, absent, stale, altered, and error cases.
+- A dependency-free Python verifier that, when source bytes are supplied, reruns the recorded adapter and compares the rederived selection, measurement, and source-subject binding with the capsule.
+- Separate evidence-finding (`SUPPORTED`, `REFUTED`, `NOT_MEASURED`, `INCONCLUSIVE`), applicability (`CURRENT`, `STALE`, `UNKNOWN`), and processing (`COMPLETED`, `ERROR`) axes.
+- An Inspect mapping that binds `eval.model` to the declared subject revision and rejects mismatches during capsule construction.
+- Sixteen automated controls, including rehashed fabricated-measurement and fabricated-binding attacks, unknown current revision, unsupported adapter version, and scored-population mismatch cases.
 
 ## What this release does not establish
 
 This is a first-party research prototype. The two adapters have been tested only on the synthetic fixtures in this repository, shaped from the cited official documentation. No real Inspect AI or Promptfoo export has been admitted. There are no external users, independent implementations, production deployments, signatures, transparency receipts, or general semantic-truth checks.
 
-A successful verification means that the recorded capsule is internally consistent with its digest, admitted source bytes, and declared numeric rule. It does not establish that the claim is true, that the evaluation is valid, that the source is independent, or that a system is safe.
+`SOURCE_DERIVED` verification means that the capsule digest and deterministic assessment are consistent and that the implemented, version-pinned adapter rederived the same selected fields from the supplied source bytes. `CAPSULE_ONLY` verification checks no source bytes and is labeled separately. Neither level establishes that the claim is true, that the evaluation design is valid, that the source is independent, or that a system is safe.
 
 ## Quick start
 
@@ -57,7 +58,7 @@ claim-commons verify \
   --current-subject-revision model-b
 ```
 
-The recorded assessment remains visible, while `current_status` becomes `STALE`.
+The recorded evidence finding and processing result remain visible, while `current_applicability` becomes `STALE`. Omitting the current revision yields `UNKNOWN`; it does not silently reuse the recorded applicability.
 
 ## Why a separate project
 
