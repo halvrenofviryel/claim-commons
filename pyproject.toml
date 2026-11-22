@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claim-commons"
+version = "0.1.0a1"
+description = "A research prototype for portable, scoped AI evaluation claims"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Ali Toygar Abak" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+]
+
+[project.scripts]
+claim-commons = "claim_commons.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

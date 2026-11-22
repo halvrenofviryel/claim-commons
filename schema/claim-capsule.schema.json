@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/halvrenofviryel/claim-commons/raw/main/schema/claim-capsule.schema.json",
+  "title": "Claim Commons Claim Capsule",
+  "type": "object",
+  "required": [
+    "capsule_id",
+    "capsule_version",
+    "created_at",
+    "claim",
+    "subject",
+    "evaluation_contract",
+    "source",
+    "selection",
+    "measurement",
+    "assessment",
+    "scope"
+  ],
+  "properties": {
+    "capsule_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "capsule_version": {"const": "0.1"},
+    "created_at": {"type": "string"},
+    "claim": {
+      "type": "object",
+      "required": ["id", "text"],
+      "properties": {"id": {"type": "string"}, "text": {"type": "string"}}
+    },
+    "subject": {
+      "type": "object",
+      "required": ["id", "revision"],
+      "properties": {"id": {"type": "string"}, "revision": {"type": "string"}}
+    },
+    "evaluation_contract": {
+      "type": "object",
+      "required": ["id", "revision", "criterion"],
+      "properties": {
+        "id": {"type": "string"},
+        "revision": {"type": "string"},
+        "criterion": {
+          "type": "object",
+          "required": ["operator", "threshold"],
+          "properties": {
+            "operator": {"enum": ["gte", "gt", "lte", "lt", "eq"]},
+            "threshold": {"type": "number"}
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["format", "ref", "sha256", "adapter_version"],
+      "properties": {
+        "format": {"type": "string"},
+        "ref": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "adapter_version": {"type": "string"}
+      }
+    },
+    "selection": {"type": "object"},
+    "measurement": {
+      "type": "object",
+      "required": ["state", "complete"],
+      "properties": {
+        "state": {"enum": ["OBSERVED", "NOT_MEASURED", "ERROR"]},
+        "complete": {"type": "boolean"},
+        "value": {"type": "number"},
+        "unit": {"type": "string"},
+        "population": {"type": "object"},
+        "reason": {"type": "string"}
+      }
+    },
+    "assessment": {
+      "type": "object",
+      "required": ["status", "basis", "qualifications"],
+      "properties": {
+        "status": {"enum": ["SUPPORTED", "REFUTED", "NOT_MEASURED", "STALE", "INCONCLUSIVE", "ERROR"]},
+        "basis": {"type": "string"},
+        "qualifications": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "scope": {"type": "object"}
+  }
+}
